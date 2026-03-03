@@ -5,6 +5,18 @@ import plotly.graph_objects as go
 import joblib
 import time
 from sklearn.ensemble import RandomForestRegressor
+import os
+import subprocess
+
+# Check if model exists, if not, train it
+if not os.path.exists('rul_model.pkl'):
+    st.info("🔄 Training model for first time use... This may take a minute.")
+    with st.spinner('Training in progress...'):
+        result = subprocess.run(['python', 'train_model.py'], capture_output=True, text=True)
+        if result.returncode == 0:
+            st.success("✅ Model trained successfully!")
+        else:
+            st.error(f"❌ Model training failed: {result.stderr}")
 
 # -------------------------------
 # Page configuration
