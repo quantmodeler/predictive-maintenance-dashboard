@@ -6,17 +6,45 @@ import joblib
 import time
 from sklearn.ensemble import RandomForestRegressor
 import os
-import subprocess
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestRegressor
+import joblib
 
-# Check if model exists, if not, train it
+# Check if model exists, if not, train it directly
 if not os.path.exists('rul_model.pkl'):
     st.info("🔄 Training model for first time use... This may take a minute.")
     with st.spinner('Training in progress...'):
-        result = subprocess.run(['python', 'train_model.py'], capture_output=True, text=True)
-        if result.returncode == 0:
+        try:
+            # Load training data
+            train = pd.read_csv('data/train_FD001.txt', sep=r'\s+', header=None)
+            if train.shape[1] > 26:
+                train = train.iloc[:, :26]
+            
+            # Assign column names
+            columns = ['engine', 'cycle', 'setting1', 'setting2', 'setting3'] + [f'sensor{i}' for i in range(1,22)]
+            train.columns = columns
+            
+            # Compute RUL
+            max_cycles = train.groupby('engine')['cycle'].max().reset_index()
+            max_cycles.columns = ['engine', 'max_cycle']
+            train = train.merge(max_cycles, on='engine')
+            train['RUL'] = train['max_cycle'] - train['cycle']
+            
+            # Train model
+            feature_columns = [f'sensor{i}' for i in range(1,22)]
+            X = train[feature_columns]
+            y = train['RUL']
+            
+            model = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
+            model.fit(X, y)
+            
+            # Save model
+            joblib.dump(model, 'rul_model.pkl')
             st.success("✅ Model trained successfully!")
-        else:
-            st.error(f"❌ Model training failed: {result.stderr}")
+            
+        except Exception as e:
+            st.error(f"❌ Model training failed: {str(e)}")
 
 # -------------------------------
 # Page configuration
