@@ -6,10 +6,6 @@ import joblib
 import time
 from sklearn.ensemble import RandomForestRegressor
 import os
-import pandas as pd
-import numpy as np
-from sklearn.ensemble import RandomForestRegressor
-import joblib
 
 # Check if model exists, if not, train it directly
 if not os.path.exists('rul_model.pkl'):
@@ -24,6 +20,10 @@ if not os.path.exists('rul_model.pkl'):
             # Assign column names
             columns = ['engine', 'cycle', 'setting1', 'setting2', 'setting3'] + [f'sensor{i}' for i in range(1,22)]
             train.columns = columns
+            
+            # Convert to numeric
+            for col in train.columns:
+                train[col] = pd.to_numeric(train[col], errors='coerce').fillna(0)
             
             # Compute RUL
             max_cycles = train.groupby('engine')['cycle'].max().reset_index()
@@ -45,12 +45,14 @@ if not os.path.exists('rul_model.pkl'):
             
         except Exception as e:
             st.error(f"❌ Model training failed: {str(e)}")
+
 # Load quantile models
 @st.cache_resource
 def load_models():
     return joblib.load('quantile_models.pkl')
 
 models = load_models()
+
 # -------------------------------
 # Page configuration
 # -------------------------------
@@ -75,16 +77,30 @@ model = load_model()
 @st.cache_data
 def load_test_data():
     # Use regex '\s+' to handle multiple spaces
-    test = pd.read_csv('data/test_FD001.txt', sep='\s+', header=None)
-    # Keep only the first 26 columns (in case of extra empty columns)
+    test = pd.read_csv('data/test_FD001.txt', sep=r'\s+', header=None)
+    # Keep only the first 26 columns
     if test.shape[1] > 26:
         test = test.iloc[:, :26]
-    # Assign proper column names
+    
+    # Assign column names
     columns = ['engine', 'cycle', 'setting1', 'setting2', 'setting3'] + [f'sensor{i}' for i in range(1,22)]
     test.columns = columns
+    
+    # Convert EVERY column to numeric, forcing errors to NaN then filling with 0
+    for col in test.columns:
+        test[col] = pd.to_numeric(test[col], errors='coerce').fillna(0)
+    
+    # Ensure engine and cycle are integers
+    test['engine'] = test['engine'].astype(int)
+    test['cycle'] = test['cycle'].astype(int)
+    
     return test
 
 test_data = load_test_data()
+
+# Debug: Check data types (will appear in sidebar)
+st.sidebar.write("Data types loaded:")
+st.sidebar.write(test_data[['sensor1', 'sensor2', 'sensor3']].dtypes)
 
 # -------------------------------
 # Get a list of unique engine IDs from test set
@@ -110,8 +126,7 @@ update_interval = st.sidebar.slider("Update interval (seconds)", 1, 5, 2)
 # Prepare data for the selected engine
 # -------------------------------
 engine_data = test_data[test_data['engine'] == selected_engine].copy()
-# Compute true RUL for the test set (if available) - for this simulation we'll use a simplified approach:
-# We'll pretend that the last cycle of the engine is the end of life, and RUL decreases as cycles increase.
+# Compute true RUL for the test set
 max_cycle_engine = engine_data['cycle'].max()
 engine_data['RUL_true'] = max_cycle_engine - engine_data['cycle']
 
@@ -149,18 +164,17 @@ conf_placeholder = conf_col.empty()
 alert_placeholder = st.empty()
 failure_placeholder = st.empty()
 
-# Button to manually advance (if user wants to step through)
+# Button to manually advance
 if st.sidebar.button("Next Cycle"):
     st.session_state.cycle_index = (st.session_state.cycle_index + 1) % total_cycles
-
 
 # Get current cycle data
 current_row = engine_data.iloc[st.session_state.cycle_index]
 sensors = current_row[[f'sensor{i}' for i in range(1,22)]].values.reshape(1, -1)
 
-# Predict RUL
-# Convert sensors to DataFrame for prediction
+# Convert sensors to DataFrame for prediction and ensure numeric type
 sensors_df = pd.DataFrame([sensors[0]], columns=[f'sensor{i}' for i in range(1,22)])
+sensors_df = sensors_df.astype(np.float64)
 
 # Predict RUL with confidence intervals using quantile models
 pred_lower = models['q10'].predict(sensors_df)[0]
@@ -178,18 +192,9 @@ vib = current_row['sensor3']
 press = current_row['sensor7']
 
 # Use median for the main display, store all for confidence interval
-pred_rul = pred_median  # Keep this variable name for compatibility with rest of code
+pred_rul = pred_median
 ci_lower = pred_lower
 ci_upper = pred_upper
-
-# Extract key sensor readings for display (choose appropriate indices from the 21 sensors)
-# For demonstration, we map:
-# - Temperature: sensor 2  (index 1 in zero-based)
-# - Vibration:   sensor 3  (index 2)
-# - Pressure:    sensor 7  (index 6)
-temp = current_row['sensor2']
-vib = current_row['sensor3']
-press = current_row['sensor7']
 
 # Check alerts
 alerts = []
@@ -203,12 +208,12 @@ if press > press_thresh:
 # Display gauges using Plotly
 def create_gauge(value, title, min_val, max_val, threshold):
     fig = go.Figure(go.Indicator(
-        mode = "gauge+number+delta",
-        value = value,
-        domain = {'x': [0, 1], 'y': [0, 1]},
-        title = {'text': title},
-        delta = {'reference': threshold},
-        gauge = {
+        mode="gauge+number+delta",
+        value=value,
+        domain={'x': [0, 1], 'y': [0, 1]},
+        title={'text': title},
+        delta={'reference': threshold},
+        gauge={
             'axis': {'range': [min_val, max_val]},
             'bar': {'color': "darkblue"},
             'steps': [
@@ -238,7 +243,7 @@ if alerts:
 else:
     alert_placeholder.success("All systems normal")
 
-# Failure mode classification (simplified rule-based)
+# Failure mode classification
 if pred_rul < 20:
     failure_placeholder.warning("🛑 **Critical**: Approaching failure – possible causes: High-pressure turbine (HPT) degradation")
 elif pred_rul < 40:
@@ -257,10 +262,9 @@ st.subheader("RUL Trend")
 history_length = min(20, st.session_state.cycle_index + 1)
 start_idx = max(0, st.session_state.cycle_index - history_length + 1)
 history_data = engine_data.iloc[start_idx:st.session_state.cycle_index+1].copy()
-# For each historical cycle, we need the predicted RUL (re-predict using model)
-# To avoid recomputation, we could store predictions, but for simplicity we'll recompute here.
+# For each historical cycle, we need the predicted RUL
 history_data['pred_RUL'] = history_data[[f'sensor{i}' for i in range(1,22)]].apply(
-    lambda row: model.predict([row.values])[0], axis=1
+    lambda row: model.predict([row.values.astype(np.float64)])[0], axis=1
 )
 
 fig = go.Figure()
@@ -270,7 +274,184 @@ fig.add_trace(go.Scatter(x=history_data['cycle'], y=history_data['RUL_true'],
                          mode='lines', name='True RUL (simulated)', line=dict(dash='dash')))
 fig.update_layout(title='RUL over recent cycles', xaxis_title='Cycle', yaxis_title='RUL')
 st.plotly_chart(fig, use_container_width=True)
-# Auto-refresh logic
+
+# ============================================
+# MULTI-ENGINE COMPARISON SECTION
+# ============================================
+st.markdown("---")
+st.header("🔍 Multi-Engine Comparison")
+
+# Select multiple engines
+comparison_engines = st.multiselect(
+    "Select engines to compare",
+    options=engine_ids,
+    default=[engine_ids[0]] if len(engine_ids) >= 1 else engine_ids,
+    key="comparison_selector"
+)
+
+if comparison_engines and len(comparison_engines) > 0:
+    # Create comparison data
+    comparison_data = []
+    
+    with st.spinner("Loading comparison data..."):
+        for engine_id in comparison_engines:
+            # Get data for this engine
+            engine_subset = test_data[test_data['engine'] == engine_id].copy()
+            
+            # Get last 30 cycles or all if less
+            recent = engine_subset.tail(min(30, len(engine_subset)))
+            
+            if len(recent) > 0:
+                # Predict RUL for each cycle
+                predictions = []
+                for idx, row in recent.iterrows():
+                    sensor_row = row[[f'sensor{i}' for i in range(1,22)]].values.reshape(1, -1)
+                    sensor_df = pd.DataFrame(sensor_row, columns=[f'sensor{i}' for i in range(1,22)])
+                    sensor_df = sensor_df.astype(np.float64)
+                    pred = models['q50'].predict(sensor_df)[0]
+                    predictions.append(max(0, pred))
+                
+                recent['pred_RUL'] = predictions
+                recent['engine_label'] = f"Engine {engine_id}"
+                comparison_data.append(recent)
+    
+    if comparison_data:
+        comparison_df = pd.concat(comparison_data)
+        
+        # Create tabs for different views
+        tab1, tab2, tab3 = st.tabs(["📈 RUL Trends", "📊 Current Status", "📋 Detailed Data"])
+        
+        with tab1:
+            # RUL Trend Comparison Chart
+            fig_comp = go.Figure()
+            
+            colors = ['blue', 'red', 'green', 'purple', 'orange', 'brown']
+            for i, engine_id in enumerate(comparison_engines):
+                engine_df = comparison_df[comparison_df['engine'] == engine_id]
+                color = colors[i % len(colors)]
+                
+                # Main RUL line
+                fig_comp.add_trace(go.Scatter(
+                    x=engine_df['cycle'],
+                    y=engine_df['pred_RUL'],
+                    mode='lines+markers',
+                    name=f'Engine {engine_id}',
+                    line=dict(color=color, width=2),
+                    marker=dict(size=6)
+                ))
+                
+                # Add confidence band
+                if 'q10' in models and 'q90' in models:
+                    lower_bounds = []
+                    upper_bounds = []
+                    for idx, row in engine_df.iterrows():
+                        sensor_row = row[[f'sensor{i}' for i in range(1,22)]].values.reshape(1, -1)
+                        sensor_df = pd.DataFrame(sensor_row, columns=[f'sensor{i}' for i in range(1,22)])
+                        sensor_df = sensor_df.astype(np.float64)
+                        lower = max(0, models['q10'].predict(sensor_df)[0])
+                        upper = max(0, models['q90'].predict(sensor_df)[0])
+                        lower_bounds.append(lower)
+                        upper_bounds.append(upper)
+                    
+                    fig_comp.add_trace(go.Scatter(
+                        x=pd.concat([engine_df['cycle'], engine_df['cycle'][::-1]]),
+                        y=pd.concat([pd.Series(upper_bounds), pd.Series(lower_bounds)[::-1]]),
+                        fill='toself',
+                        fillcolor=f'rgba({i*40},{255-i*40},100,0.2)',
+                        line=dict(color='rgba(255,255,255,0)'),
+                        name=f'Engine {engine_id} 90% CI',
+                        showlegend=True
+                    ))
+            
+            fig_comp.update_layout(
+                title='RUL Comparison Across Engines',
+                xaxis_title='Cycle Number',
+                yaxis_title='Predicted Remaining Useful Life (cycles)',
+                hovermode='x unified',
+                height=500
+            )
+            st.plotly_chart(fig_comp, use_container_width=True)
+            
+            # Summary statistics
+            st.subheader("📊 Summary Statistics")
+            summary = comparison_df.groupby('engine').agg({
+                'pred_RUL': ['last', 'min', 'mean', 'max'],
+                'cycle': 'max'
+            }).round(0)
+            summary.columns = ['Current RUL', 'Min RUL', 'Avg RUL', 'Max RUL', 'Total Cycles']
+            summary = summary.reset_index()
+            summary['engine'] = summary['engine'].astype(int)
+            summary = summary.set_index('engine')
+            
+            # Add color coding based on health status
+            def color_rul(val):
+                if val < 30:
+                    return 'background-color: #ffcccc'
+                elif val < 60:
+                    return 'background-color: #ffffcc'
+                else:
+                    return 'background-color: #ccffcc'
+            
+            styled_summary = summary.style.map(color_rul, subset=['Current RUL'])
+            st.dataframe(styled_summary, use_container_width=True)
+        
+        with tab2:
+            # Current Status Dashboard
+            st.subheader("📍 Current Engine Status")
+            
+            cols = st.columns(min(3, len(comparison_engines)))
+            for idx, engine_id in enumerate(comparison_engines):
+                with cols[idx % 3]:
+                    engine_current = comparison_df[comparison_df['engine'] == engine_id].iloc[-1]
+                    
+                    # Create metric cards
+                    st.metric(
+                        label=f"Engine {engine_id}",
+                        value=f"{engine_current['pred_RUL']:.0f} cycles",
+                        delta=None
+                    )
+                    
+                    # Sensor gauges in small
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("Temp", f"{engine_current['sensor2']:.0f}°F")
+                    col2.metric("Vib", f"{engine_current['sensor3']:.0f}g")
+                    col3.metric("Press", f"{engine_current['sensor7']:.0f}psi")
+                    
+                    # Health indicator
+                    if engine_current['pred_RUL'] < 30:
+                        st.error("🔴 CRITICAL")
+                    elif engine_current['pred_RUL'] < 60:
+                        st.warning("🟡 WARNING")
+                    else:
+                        st.success("🟢 HEALTHY")
+                    
+                    st.divider()
+        
+        with tab3:
+            # Detailed data table
+            st.subheader("📋 Detailed Sensor Data")
+            
+            display_cols = ['engine', 'cycle', 'pred_RUL', 'sensor2', 'sensor3', 'sensor7']
+            display_df = comparison_df[display_cols].copy()
+            display_df.columns = ['Engine', 'Cycle', 'RUL', 'Temp', 'Vib', 'Press']
+            display_df = display_df.sort_values(['Engine', 'Cycle'], ascending=[True, False])
+            
+            st.dataframe(display_df, use_container_width=True)
+            
+            # Download button
+            csv = display_df.to_csv(index=False)
+            st.download_button(
+                label="📥 Download Comparison Data (CSV)",
+                data=csv,
+                file_name=f"engine_comparison_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv"
+            )
+    else:
+        st.info("No data available for selected engines")
+else:
+    st.info("👆 Select at least one engine from the dropdown above to start comparison")
+
+# Auto-refresh logic (keep this at the very end)
 if st.sidebar.checkbox("Auto refresh", value=True):
     time.sleep(update_interval)
     st.session_state.cycle_index = (st.session_state.cycle_index + 1) % total_cycles
