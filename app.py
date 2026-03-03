@@ -45,7 +45,12 @@ if not os.path.exists('rul_model.pkl'):
             
         except Exception as e:
             st.error(f"❌ Model training failed: {str(e)}")
+# Load quantile models
+@st.cache_resource
+def load_models():
+    return joblib.load('quantile_models.pkl')
 
+models = load_models()
 # -------------------------------
 # Page configuration
 # -------------------------------
@@ -154,11 +159,28 @@ current_row = engine_data.iloc[st.session_state.cycle_index]
 sensors = current_row[[f'sensor{i}' for i in range(1,22)]].values.reshape(1, -1)
 
 # Predict RUL
-pred_rul = model.predict(sensors)[0]
+# Convert sensors to DataFrame for prediction
+sensors_df = pd.DataFrame([sensors[0]], columns=[f'sensor{i}' for i in range(1,22)])
 
-# Simulate confidence interval (e.g., ±10% of predicted RUL)
-ci_lower = max(0, pred_rul * 0.9)
-ci_upper = pred_rul * 1.1
+# Predict RUL with confidence intervals using quantile models
+pred_lower = models['q10'].predict(sensors_df)[0]
+pred_median = models['q50'].predict(sensors_df)[0]
+pred_upper = models['q90'].predict(sensors_df)[0]
+
+# Ensure non-negative predictions
+pred_lower = max(0, pred_lower)
+pred_median = max(0, pred_median)
+pred_upper = max(0, pred_upper)
+
+# Extract key sensor readings for display
+temp = current_row['sensor2']
+vib = current_row['sensor3']
+press = current_row['sensor7']
+
+# Use median for the main display, store all for confidence interval
+pred_rul = pred_median  # Keep this variable name for compatibility with rest of code
+ci_lower = pred_lower
+ci_upper = pred_upper
 
 # Extract key sensor readings for display (choose appropriate indices from the 21 sensors)
 # For demonstration, we map:
