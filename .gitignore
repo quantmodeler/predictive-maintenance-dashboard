@@ -1,0 +1,5 @@
+rul_model.pkl 
+venv/ 
+__pycache__/ 
+*.pyc 
+.streamlit/ 
