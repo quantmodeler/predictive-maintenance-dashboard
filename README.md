@@ -1,14 +1,17 @@
-# predictive-maintenance-dashboard
+# 🔧predictive-maintenance-dashboard
 Streamlit dashboard for predictive maintenance using NASA turbofan data
-A real‑time interactive dashboard that simulates predictive maintenance for aircraft engines. It ingests sensor data from the NASA turbofan dataset, predicts remaining useful life (RUL) using a machine learning model, and displays live gauges with configurable alert thresholds.
+An interactive, real‑time predictive maintenance simulator for aircraft engines. The dashboard ingests sensor data from the NASA C‑MAPSS dataset, predicts remaining useful life (RUL) using quantile regression, and displays live gauges with configurable alert thresholds. It also provides sophisticated failure mode classification, multi‑engine comparison, and downloadable reports.
 ## ✨ Features
 
 - **Live sensor monitoring** – Temperature, vibration, and pressure gauges update as you step through cycles.
-- **RUL prediction** – Random Forest model estimates remaining useful life with a simple confidence interval.
+- **Quantile regression confidence intervals** – Real 90% prediction intervals using XGBoost quantile models (not just ±10%).
 - **Configurable alerts** – Set your own thresholds; warnings appear when a sensor exceeds the limit.
-- **Failure mode classification** – Rule‑based messages indicate the severity and possible cause (e.g., “High‑pressure turbine degradation”).
-- **Trend chart** – View predicted RUL vs. simulated true RUL over the last 20 cycles.
+- **Sophisticated failure mode classification** – Identifies specific issues like HPT/LPT degradation, bearing wear, compressor fouling, and more, with confidence levels.
+- **Multi‑engine comparison** – Compare up to six engines side‑by‑side with trend charts, current status cards, and detailed data export.
 - **Easy deployment** – One‑click deploy to Streamlit Community Cloud.
+- **Export reports** – Download comparison data as CSV.
+- **Auto‑refresh simulation** – Watch the engine age in real time (adjustable interval).
+
 
 ---
 
@@ -16,10 +19,12 @@ A real‑time interactive dashboard that simulates predictive maintenance for ai
 
 - **Python 3.9+**
 - **Streamlit** – frontend framework
+- **XGBoost** – quantile regression models
 - **Scikit‑learn** – Random Forest model
 - **Pandas / NumPy** – data handling
 - **Plotly** – interactive gauges and charts
 - **Joblib** – model serialisation
+- **Git** – version control
 
 ---
 
@@ -50,27 +55,27 @@ Only the **FD001** subset is used:
    cd predictive-maintenance-dashboard
    
 2. **Create and activate a virtual environment**
-bash
-python -m venv venv
+  ```bash
+  python -m venv venv
 
- #**Windows**
-venv\Scripts\activate
+  #**Windows**
+  venv\Scripts\activate
 
-#**Mac / Linux**
-source venv/bin/activate
+  #**Mac / Linux**
+  source venv/bin/activate
 
-3. **Install dependencies**
-bash
-pip install -r requirements.txt
+3. **Install dependencies** 
+  ```bash
+  pip install -r requirements.txt
 
 4. **Download the dataset**
 Place the three text files (train_FD001.txt, test_FD001.txt, RUL_FD001.txt) inside a folder named data/ in the project root.
 
 5. **Train the model**
-bash
-python train_model.py
-This creates rul_model.pkl.
+  ```bash
+   python train_model.py
+   This creates rul_model.pkl.
 
 6. **Run the dashboard locally**
-bash
-streamlit run app.py
+  ```bash
+  streamlit run app.py
