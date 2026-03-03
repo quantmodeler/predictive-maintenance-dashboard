@@ -7,6 +7,12 @@ import time
 from sklearn.ensemble import RandomForestRegressor
 import os
 
+# Import failure mode classifier
+from failure_modes import classify_failure_mode, get_failure_mode_icon
+
+# Debug: Check if import worked
+st.sidebar.write("✅ Failure modes module loaded")
+
 # Check if model exists, if not, train it directly
 if not os.path.exists('rul_model.pkl'):
     st.info("🔄 Training model for first time use... This may take a minute.")
@@ -243,15 +249,47 @@ if alerts:
 else:
     alert_placeholder.success("All systems normal")
 
-# Failure mode classification
-if pred_rul < 20:
-    failure_placeholder.warning("🛑 **Critical**: Approaching failure – possible causes: High-pressure turbine (HPT) degradation")
-elif pred_rul < 40:
-    failure_placeholder.info("⚠️ **Degraded**: Moderate degradation – check fan and compressor")
-elif pred_rul < 60:
-    failure_placeholder.info("🔧 **Early wear**: Some degradation observed – schedule maintenance")
+# Debug: Check if failure mode function is being called
+st.sidebar.write("Calling failure mode classifier...")
+
+# Sophisticated failure mode classification
+failure_modes = classify_failure_mode(current_row, pred_rul, alerts, engine_history=None)
+
+# Debug: Show what was returned
+st.sidebar.write(f"Returned {len(failure_modes) if failure_modes else 0} failure modes")
+if failure_modes:
+    st.sidebar.write("First mode:", failure_modes[0])
+
+# Force a test message to appear in main area
+st.info("🔧 Test: If you see this, the app is running. Failure modes should appear below this line.")
+
+# Display failure modes
+if failure_modes:
+    # First, clear the placeholder
+    failure_placeholder.empty()
+    
+    # Create a nice display
+    with failure_placeholder.container():
+        for mode in failure_modes:
+            if "IMMEDIATE" in mode:
+                st.error(f"🚨 **{mode}**")
+            elif "Schedule" in mode or "Plan" in mode:
+                st.warning(f"📅 **{mode}**")
+            elif "High Confidence" in mode:
+                icon = mode.split()[0] if mode.split()[0] in ["🔥", "⚙️", "🌀", "⚠️", "💨", "📉"] else "🔧"
+                st.error(f"{icon} **{mode}**")
+            elif "Medium Confidence" in mode:
+                icon = mode.split()[0] if mode.split()[0] in ["🔥", "⚙️", "🌀", "⚠️", "💨", "📉"] else "🔧"
+                st.warning(f"{icon} **{mode}**")
+            elif "Low Confidence" in mode:
+                icon = mode.split()[0] if mode.split()[0] in ["🔥", "⚙️", "🌀", "⚠️", "💨", "📉"] else "🔧"
+                st.info(f"{icon} **{mode}**")
+            elif "Action items" in mode:
+                st.info(f"💡 {mode}")
+            else:
+                st.success(f"✅ {mode}")
 else:
-    failure_placeholder.success("✅ **Healthy**: No significant degradation")
+    failure_placeholder.success("✅ **All systems operating normally**")
 
 # Optional: Show raw sensor values in an expander
 with st.expander("View all sensor readings"):
@@ -417,11 +455,18 @@ if comparison_engines and len(comparison_engines) > 0:
                     col2.metric("Vib", f"{engine_current['sensor3']:.0f}g")
                     col3.metric("Press", f"{engine_current['sensor7']:.0f}psi")
                     
-                    # Health indicator
+                    # Health indicator with failure mode
                     if engine_current['pred_RUL'] < 30:
                         st.error("🔴 CRITICAL")
+                        # Show quick failure mode for this engine
+                        quick_modes = classify_failure_mode(engine_current, engine_current['pred_RUL'], [], None)
+                        if quick_modes:
+                            st.caption(f"⚠️ {quick_modes[0]}")
                     elif engine_current['pred_RUL'] < 60:
                         st.warning("🟡 WARNING")
+                        quick_modes = classify_failure_mode(engine_current, engine_current['pred_RUL'], [], None)
+                        if quick_modes:
+                            st.caption(f"📋 {quick_modes[0]}")
                     else:
                         st.success("🟢 HEALTHY")
                     
